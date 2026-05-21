@@ -87,7 +87,79 @@ echo ""
 say "Generating your .claude/ folder..."
 echo ""
 
-mkdir -p .claude/skills .claude/hooks .claude/agents
+mkdir -p .claude/skills .claude/hooks .claude/agents .claude/rules .claude/output-styles
+
+# ── .gitignore (both paths) ───────────────────────────────────────────────────
+if [[ ! -f .gitignore ]]; then
+  touch .gitignore
+fi
+for entry in "CLAUDE.local.md" ".claude/settings.local.json"; do
+  grep -qxF "$entry" .gitignore || echo "$entry" >> .gitignore
+done
+ok ".gitignore"
+
+# ── .claude/rules/typescript.md (both paths — path-scoped, harmless if unused) ──
+cat > .claude/rules/typescript.md << 'EOF'
+---
+description: TypeScript conventions — loads only when working on .ts/.tsx files
+globs: ["src/**/*.ts", "src/**/*.tsx"]
+---
+
+# TypeScript conventions
+
+- No default exports. Named exports only.
+- Props interfaces named `{Component}Props`, located in the same file.
+- Prefer `type` over `interface` unless you need declaration merging.
+- No `any`. Use `unknown` and narrow it, or use a proper type.
+- Async functions return `Promise<T>`, not `Promise<any>`.
+- Co-locate tests: `{name}.test.ts` next to `{name}.ts`.
+- `zod` for runtime validation at system boundaries; don't validate internal data.
+EOF
+ok ".claude/rules/typescript.md"
+
+# ── .claude/rules/python.md ───────────────────────────────────────────────────
+cat > .claude/rules/python.md << 'EOF'
+---
+description: Python conventions — loads only when working on .py files
+globs: ["**/*.py"]
+---
+
+# Python conventions
+
+- Type hints on all public functions. Use `from __future__ import annotations`.
+- `dataclasses` or `pydantic` for data structures; no plain dicts for structured data.
+- No mutable default arguments (`def f(x=[])` is wrong; use `None` and set inside).
+- Exceptions: raise specific types, catch specific types. Never bare `except:`.
+- Tests in `tests/test_{module}.py`. One test file per module.
+- `ruff` for linting and formatting. Don't fight it.
+- `pathlib.Path` over `os.path` for filesystem operations.
+EOF
+ok ".claude/rules/python.md"
+
+# ── .claude/output-styles/concise.md (both paths) ────────────────────────────
+cat > .claude/output-styles/concise.md << 'EOF'
+# Output style: Concise
+
+Use this when you want fast, structured answers with no prose padding.
+
+## Instructions for Claude
+
+When this style is active:
+- Lead with the answer, not the reasoning
+- Use bullet points or short numbered lists, not paragraphs
+- No preamble ("Great question", "Sure, here's...", "Certainly")
+- No trailing summary ("In summary...", "I hope this helps")
+- If you need to show reasoning, put it after the answer, not before
+- Code: show only the relevant snippet, not the entire file
+- Max response length: fit on one screen unless the task genuinely requires more
+
+## When to use
+> /output-styles/concise — keep this response short
+
+Good for: quick lookups, small edits, status checks.
+Not for: architecture discussions, complex debugging, code you haven't seen before.
+EOF
+ok ".claude/output-styles/concise.md"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ENGINEER PATH
@@ -96,19 +168,20 @@ if [[ "$ROLE" == "engineer" ]]; then
 
 # ── CLAUDE.md ─────────────────────────────────────────────────────────────────
 cat > CLAUDE.md << EOF
+<!-- Maintainer notes go here — HTML comments are stripped before context injection, so write freely. -->
+<!-- Added: ${DATE} | Path: engineer | Stack: ${STACK} -->
+<!-- Keep this file under 200 lines. Compliance degrades before that — prune aggressively. -->
+<!-- Move anything reference-like (patterns, examples, type lists) into skills or rules files. -->
+<!-- Pull in reference files with @-imports, e.g.: @.claude/rules/typescript.md -->
+
 # CLAUDE.md — ${NAME}
 > Stack: ${STACK} | ${TEAM} | Updated: ${DATE}
 
 ## Project
 <!-- What this does, who it's for, what it doesn't do. Fill this in. -->
 
-## Stack
-- Runtime: ${STACK}
-- Test: <!-- fill in: jest / pytest / vitest / etc -->
-- Lint: <!-- fill in: eslint / ruff / etc -->
-
 ## Commands
-<!-- Fill these in. Claude uses them to run, test, and lint your code. -->
+<!-- Fill these in. Claude runs these to build, test, and lint. -->
 - Build: \`\`
 - Test:  \`\`
 - Lint:  \`\`
@@ -119,11 +192,14 @@ cat > CLAUDE.md << EOF
 - No backwards-compat hacks for removed code
 - Don't add error handling for scenarios that can't happen
 - Don't add features beyond what the task requires
-- Three similar lines is better than a premature abstraction
 
 ## Commit style
 - Imperative mood: "add X", "fix Y", "remove Z"
 - No type prefixes unless your tooling requires them
+
+## Verification
+After making changes, always run the test command above and report results before
+declaring a task complete. Don't declare success based on plausibility — verify it.
 
 ## What to change first
 1. Fill in the Commands section above
@@ -131,6 +207,28 @@ cat > CLAUDE.md << EOF
 3. Remove any rules that don't apply
 EOF
 ok "CLAUDE.md"
+
+# ── CLAUDE.local.md (personal, gitignored) ────────────────────────────────────
+cat > CLAUDE.local.md.template << 'EOF'
+<!-- CLAUDE.local.md — personal project instructions. Gitignored. Never commit this. -->
+<!-- Copy to CLAUDE.local.md and fill in. -->
+
+# Personal instructions — [your name]
+
+## Shortcuts I always use
+<!-- Remind Claude about aliases, local scripts, or shortcuts specific to your setup. -->
+<!-- Example: "Use `nr` instead of `npm run`. My test command is `nr test:watch`." -->
+
+## Reminders to self
+<!-- Things you keep forgetting. Claude will surface these when relevant. -->
+<!-- Example: "The staging DB is read-only after 6pm UTC due to the nightly snapshot." -->
+
+## Overrides to team conventions
+<!-- Where you personally diverge from what's in CLAUDE.md. -->
+<!-- Example: "I prefer verbose variable names even when the team convention is short ones." -->
+EOF
+cp CLAUDE.local.md.template CLAUDE.local.md
+ok "CLAUDE.local.md.template + CLAUDE.local.md"
 
 # ── skills/pr-description.md ──────────────────────────────────────────────────
 cat > .claude/skills/pr-description.md << 'EOF'
@@ -426,7 +524,7 @@ The more specific the brief, the more useful the review.
 EOF
 ok ".claude/agents/reviewer.md"
 
-# ── PROMPTS.md ────────────────────────────────────────────────────────────────
+# ── PROMPTS.md — engineer ─────────────────────────────────────────────────────
 cat > PROMPTS.md << 'EOF'
 # PROMPTS.md — Engineering Prompt Patterns
 
@@ -453,13 +551,6 @@ The last line matters. Without it Claude will "helpfully" clean up adjacent code
 
 ---
 
-## Reviewing before commit
-
-> Review the diff below. Flag anything blocking. Be brief.
-> [paste diff]
-
----
-
 ## Writing a test
 
 > Write a test for [function] in [file].
@@ -483,17 +574,80 @@ The last line matters. Without it Claude will "helpfully" clean up adjacent code
 
 ---
 
-## When Claude is going in circles
-
-> Stop. What's the actual problem here? State it in one sentence before doing anything else.
-
----
-
 ## The fast path for small tasks
 
 > In [file], [do X]. Nothing else.
 
 Short tasks don't need context. Over-explaining makes Claude hedge.
+
+---
+
+## Session management
+
+**`/clear`** — use between unrelated tasks, not just when things go wrong. Context from
+one task bleeds into the next and makes Claude hedge. Clear early, clear often.
+
+**`/compact [instructions]`** — compress the conversation while preserving what matters.
+Be specific: `/compact preserve the architecture decisions we agreed on`
+
+**`/rewind`** — restore conversation and file state to any prior checkpoint. Use when
+Claude has overcorrected and you want to try a different approach.
+
+**`/btw [question]`** — ask a quick question that never enters conversation history.
+Good for one-off lookups that would pollute context if remembered.
+
+---
+
+## The verification principle
+
+The highest-leverage thing you can do: give Claude a way to verify its own work.
+
+Always provide one of:
+- A test command and expected output
+- A specific file + line to check
+- A screenshot of what "correct" looks like
+
+Without this, Claude will declare success based on plausibility, not evidence.
+
+> After making this change, run `[test command]`. It should output `[expected]`.
+> Don't mark this as done until that passes.
+
+---
+
+## Writer / Reviewer pattern
+
+Session A writes the code. Start a completely fresh Session B to review it.
+
+Claude won't be biased toward code it just wrote. The review is genuinely independent.
+Brief Session B explicitly — it has no context from Session A.
+
+> (in Session B) Review `src/[file].ts`. Context: [what it does, what changed, what the risk is].
+> Apply the checklist in `.claude/skills/code-review.md`. Flag anything blocking.
+
+---
+
+## Interview-then-execute
+
+Start with a minimal spec. Ask Claude to interview you until it has everything it needs.
+Then start a **fresh session** and paste the full spec to execute.
+The interview and the build are deliberately separate — mixing them pollutes the context.
+
+> I need to build [thing]. Before you write any code, ask me questions until you
+> have everything you need to write a complete spec. Then I'll start fresh to build it.
+
+---
+
+## Failure patterns to avoid
+
+**Kitchen sink session** — one long session for unrelated tasks.
+Fix: `/clear` between tasks. Context from one task will distort the next.
+
+**Correcting in circles** — asking Claude to fix the same thing 3+ times.
+Fix: after 2 failed corrections, start fresh with a better prompt. Don't iterate on bad output.
+
+**Over-specified CLAUDE.md** — listing every convention, every file, every rule.
+Fix: CLAUDE.md is for things Claude can't figure out by reading the code. If it's in the
+code, it's already context. Write rules, not tutorials.
 EOF
 ok "PROMPTS.md"
 
@@ -541,6 +695,11 @@ else
 
 # ── CLAUDE.md ─────────────────────────────────────────────────────────────────
 cat > CLAUDE.md << EOF
+<!-- Maintainer notes go here — HTML comments are stripped before context injection, so write freely. -->
+<!-- Added: ${DATE} | Path: founder/ops | Output: ${OUTPUT} -->
+<!-- Keep this file under 200 lines. Compliance degrades before that — prune aggressively. -->
+<!-- Move long style guides and voice examples into skills files instead. -->
+
 # CLAUDE.md — ${NAME}
 > Role: Founder / Ops | ${TEAM} | Updated: ${DATE}
 
@@ -569,6 +728,28 @@ cat > CLAUDE.md << EOF
 3. Remove rules that don't apply
 EOF
 ok "CLAUDE.md"
+
+# ── CLAUDE.local.md (personal, gitignored) ────────────────────────────────────
+cat > CLAUDE.local.md.template << 'EOF'
+<!-- CLAUDE.local.md — personal project instructions. Gitignored. Never commit this. -->
+<!-- Copy to CLAUDE.local.md and fill in. -->
+
+# Personal instructions — [your name]
+
+## Shortcuts and preferences
+<!-- Things specific to how you work that shouldn't be in the shared file. -->
+<!-- Example: "Always draft in bullet points first. I'll ask for prose if I want it." -->
+
+## Reminders to self
+<!-- Things you keep forgetting. Claude will surface these when relevant. -->
+<!-- Example: "The board deck is due the first Monday of every month." -->
+
+## Overrides to team conventions
+<!-- Where you personally diverge from what's in CLAUDE.md. -->
+<!-- Example: "I prefer shorter sentences than the team style guide suggests." -->
+EOF
+cp CLAUDE.local.md.template CLAUDE.local.md
+ok "CLAUDE.local.md.template + CLAUDE.local.md"
 
 # ── skills/weekly-update.md ───────────────────────────────────────────────────
 cat > .claude/skills/weekly-update.md << EOF
@@ -727,7 +908,7 @@ Generate a prep document before an important meeting.
 EOF
 ok ".claude/skills/meeting-brief.md"
 
-# ── PROMPTS.md ────────────────────────────────────────────────────────────────
+# ── PROMPTS.md — founder ──────────────────────────────────────────────────────
 cat > PROMPTS.md << EOF
 # PROMPTS.md — Founder / Ops Prompt Patterns
 
@@ -792,12 +973,52 @@ Always say what you've tried. It stops Claude from suggesting things you've alre
 > [Do X]. Context: [one sentence]. Output format: ${TOOLS}.
 
 Short tasks don't need long prompts. Over-explaining makes Claude hedge.
+
+---
+
+## Session management
+
+**\`/clear\`** — use between unrelated tasks, not just when things go wrong. Context from
+one topic bleeds into the next. Clear early, clear often.
+
+**\`/compact [instructions]\`** — compress the conversation while preserving what matters.
+Be specific: \`/compact preserve the decisions we made about the Q3 strategy\`
+
+**\`/rewind\`** — restore conversation state to any prior checkpoint. Use when Claude has
+gone in a direction you don't want and you'd rather start the branch over.
+
+**\`/btw [question]\`** — ask a quick question that never enters conversation history.
+Good for one-off checks that would pollute context if remembered.
+
+---
+
+## Interview-then-execute
+
+Before asking Claude to write a decision memo, SOP, or brief, ask it to interview you first.
+Then start a fresh session and paste your answers as the brief.
+The interview and the writing are deliberately separate.
+
+> Before you write anything, ask me questions until you have everything you need
+> to write [the memo / the SOP / the brief]. I'll answer, then we'll start fresh to write it.
+
+---
+
+## Failure patterns to avoid
+
+**Treating Claude like a search engine** — asking for information instead of a collaborator.
+Fix: tell Claude what you're trying to decide or produce, not just what you want to know.
+
+**Forgetting to specify the audience** — Claude defaults to a general reader.
+Fix: always say who will read this and what they already know.
+
+**Asking for a document without a decision** — "write a memo about X" with no clear purpose.
+Fix: "write a memo that gets [stakeholder] to approve [action] by [date]."
 EOF
 ok "PROMPTS.md"
 
 fi  # end role branch
 
-# ── README.md (shared) ────────────────────────────────────────────────────────
+# ── README.md (shared, rewritten) ─────────────────────────────────────────────
 cat > README.md << 'READMEEOF'
 # claude-code-starter
 
@@ -822,13 +1043,38 @@ Two paths:
 
 ---
 
+## What's in your `.claude/` folder
+
+Every primitive has a job. Here's what each one does and when to use it.
+
+| Primitive | Loads | Use for |
+|-----------|-------|---------|
+| `CLAUDE.md` | Always, every session | Project context, rules, commands — things Claude needs to know by default |
+| `CLAUDE.local.md` | Always (gitignored) | Personal overrides, shortcuts, reminders — never committed |
+| `.claude/rules/` | When file paths match `globs:` | Language or domain conventions that should only apply to specific files |
+| `.claude/skills/` | Described at startup; full content loads on invocation | Reusable workflows: `/pr-description`, `/code-review`, etc. |
+| `.claude/hooks/` | Triggered by events, runs outside the model loop | Zero context cost automation: type-check after edit, print context at session start |
+| `.claude/agents/` | Spawned explicitly | Subagents that work independently and report back — use for isolation, not coordination |
+| `.claude/output-styles/` | Referenced manually | Custom system-prompt sections for response format control |
+| `.mcp.json` | At startup (version controlled) | Team-shared MCP server config — tools everyone on the project should have |
+| `.claude/settings.json` | Always | Permissions, hook wiring, model defaults — committed and shared |
+| `.claude/settings.local.json` | Always (gitignored) | Personal permission overrides — separate from `CLAUDE.local.md`, which is for instructions |
+
+**`CLAUDE.local.md` vs `settings.local.json`:** `CLAUDE.local.md` is for instructions ("when I ask for a draft, start with bullet points"). `settings.local.json` is for settings (permissions you want locally but not on CI). They're different files for different purposes.
+
+---
+
 ## What gets generated
 
 ### Everyone
 | File | What it does |
 |------|-------------|
-| `CLAUDE.md` | Project context Claude reads at the start of every session |
+| `CLAUDE.md` | Project context Claude reads every session |
+| `CLAUDE.local.md` + `CLAUDE.local.md.template` | Personal instructions (gitignored) |
 | `PROMPTS.md` | Curated prompt patterns for your path |
+| `.claude/rules/typescript.md` | TS conventions (path-scoped: only loads for `.ts`/`.tsx` files) |
+| `.claude/rules/python.md` | Python conventions (path-scoped: only loads for `.py` files) |
+| `.claude/output-styles/concise.md` | Short-response system prompt section |
 
 ### Engineer path
 | File | What it does |
@@ -852,6 +1098,20 @@ Two paths:
 
 ---
 
+## Combining features
+
+These four combinations do more together than separately:
+
+**CLAUDE.md + Skills** — CLAUDE.md sets the context that's always true; skills carry the workflow details that only load when invoked. Keep CLAUDE.md lean by moving anything reference-like into a skill.
+
+**Skills + MCP** — A skill can call MCP tools. Write a skill that queries your database, hits your internal API, or reads from Notion — the skill provides the workflow, the MCP server provides the access.
+
+**Hook + MCP** — A hook can trigger an MCP tool call on every file edit. Useful for linting, schema validation, or syncing state without any context cost to the conversation.
+
+**Writer / Reviewer (two sessions)** — Session A writes. Session B reviews with no shared context. Claude won't be biased toward code it just wrote. Brief Session B explicitly — it has nothing from Session A.
+
+---
+
 ## The 5 levels, briefly
 
 1. **L1 — Raw prompting.** Just you and Claude in a conversation. See `PROMPTS.md`.
@@ -860,27 +1120,27 @@ Two paths:
 4. **L4 — Hooks.** Automated triggers on tool use, session start, etc. See `.claude/hooks/`.
 5. **L5 — Agents.** Subagents with their own instructions. See `.claude/agents/`.
 
-You don't need to understand all five to get value. Start with L1 and L2. The rest is there when you need it.
+You don't need all five to get value. Start with L1 and L2. Add the rest when you have a specific problem they solve.
 
 ---
 
 ## What to change first
 
 **Engineers:**
-1. Open `CLAUDE.md` and fill in the Commands section (`build`, `test`, `lint`)
-2. Add your project description
-3. Run `/pr-description` on your next PR and see if the format fits
+1. Open `CLAUDE.md` — fill in the Commands section (`build`, `test`, `lint`) and the project description
+2. Open `CLAUDE.local.md` — add your personal shortcuts and reminders
+3. Run `/pr-description` on your next PR and adjust the format if it doesn't fit
 
 **Founders / Ops:**
-1. Open `CLAUDE.md` and fill in "Who I Am"
-2. Paste 2-3 sentences of your writing in "My writing style"
-3. Try `/decision-memo` on a real decision you're working through
+1. Open `CLAUDE.md` — fill in "Who I Am" and paste 2-3 sentences of your writing in "My writing style"
+2. Open `CLAUDE.local.md` — add your personal preferences and anything the team file shouldn't contain
+3. Try `/decision-memo` on a real decision you're working through — see if the format fits
 
 ---
 
 ## Running setup again
 
-Safe to re-run. It will overwrite existing files. Back up any customisations first.
+Safe to re-run. It will overwrite generated files. Back up any customisations first.
 
 ```bash
 bash setup.sh
@@ -894,5 +1154,5 @@ echo -e "${GREEN}Done.${NC} Files created:"
 echo ""
 find . -not -path './.git/*' -not -name '.DS_Store' | sort | grep -v "^\.$" | sed 's|^\./||' | awk '{print "  " $0}'
 echo ""
-echo "Next: open CLAUDE.md and fill in the two marked sections."
+echo "Next: open CLAUDE.md and CLAUDE.local.md and fill in the marked sections."
 echo ""
